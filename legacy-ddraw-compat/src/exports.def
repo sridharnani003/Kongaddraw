@@ -1,0 +1,33 @@
+; =============================================================================
+; legacy-ddraw-compat - DirectDraw Compatibility Layer
+; Module Definition File
+;
+; Exports the DirectDraw API functions that applications expect from ddraw.dll
+; =============================================================================
+
+LIBRARY ddraw
+
+EXPORTS
+    ; Core DirectDraw creation functions
+    DirectDrawCreate            @1
+    DirectDrawCreateClipper     @2
+    DirectDrawCreateEx          @3
+
+    ; Enumeration functions
+    DirectDrawEnumerateA        @4
+    DirectDrawEnumerateExA      @5
+    DirectDrawEnumerateExW      @6
+    DirectDrawEnumerateW        @7
+
+    ; COM support (private)
+    DllCanUnloadNow             PRIVATE
+    DllGetClassObject           PRIVATE
+
+    ; Additional exports some games may need
+    AcquireDDThreadLock         @8
+    ReleaseDDThreadLock         @9
+    D3DParseUnknownCommand      @10
+
+    ; Surface completion callback
+    DDInternalLock              @11
+    DDInternalUnlock            @12
