@@ -104,13 +104,13 @@ SurfaceImpl::~SurfaceImpl() {
     // Clean up GDI resources
     if (m_hDC) {
         if (m_hBitmapOld) {
-            SelectObject(m_hDC, m_hBitmapOld);
+            ::SelectObject(m_hDC, m_hBitmapOld);
         }
-        DeleteDC(m_hDC);
+        ::DeleteDC(m_hDC);
         m_hDC = nullptr;
     }
     if (m_hBitmap) {
-        DeleteObject(m_hBitmap);
+        ::DeleteObject(m_hBitmap);
         m_hBitmap = nullptr;
     }
 
@@ -555,8 +555,9 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::GetDC(HDC* lphDC) {
         return DDERR_DCALREADYCREATED;
     }
 
-    HDC hScreenDC = GetDC(nullptr);
-    m_hDC = CreateCompatibleDC(hScreenDC);
+    // Use :: prefix to call Windows API functions (not our class methods)
+    HDC hScreenDC = ::GetDC(nullptr);
+    m_hDC = ::CreateCompatibleDC(hScreenDC);
 
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -567,18 +568,18 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::GetDC(HDC* lphDC) {
     bmi.bmiHeader.biCompression = BI_RGB;
 
     void* pBits = nullptr;
-    m_hBitmap = CreateDIBSection(m_hDC, &bmi, DIB_RGB_COLORS, &pBits, nullptr, 0);
+    m_hBitmap = ::CreateDIBSection(m_hDC, &bmi, DIB_RGB_COLORS, &pBits, nullptr, 0);
 
     if (!m_hBitmap || !pBits) {
-        DeleteDC(m_hDC);
+        ::DeleteDC(m_hDC);
         m_hDC = nullptr;
-        ReleaseDC(nullptr, hScreenDC);
+        ::ReleaseDC(nullptr, hScreenDC);
         return DDERR_GENERIC;
     }
 
     memcpy(pBits, m_pixels.data(), m_pixels.size());
-    m_hBitmapOld = static_cast<HBITMAP>(SelectObject(m_hDC, m_hBitmap));
-    ReleaseDC(nullptr, hScreenDC);
+    m_hBitmapOld = static_cast<HBITMAP>(::SelectObject(m_hDC, m_hBitmap));
+    ::ReleaseDC(nullptr, hScreenDC);
 
     *lphDC = m_hDC;
     return DD_OK;
@@ -590,14 +591,14 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::ReleaseDC(HDC hDC) {
     }
 
     BITMAP bm;
-    GetObject(m_hBitmap, sizeof(bm), &bm);
+    ::GetObject(m_hBitmap, sizeof(bm), &bm);
     if (bm.bmBits) {
         memcpy(m_pixels.data(), bm.bmBits, m_pixels.size());
     }
 
-    SelectObject(m_hDC, m_hBitmapOld);
-    DeleteObject(m_hBitmap);
-    DeleteDC(m_hDC);
+    ::SelectObject(m_hDC, m_hBitmapOld);
+    ::DeleteObject(m_hBitmap);
+    ::DeleteDC(m_hDC);
 
     m_hDC = nullptr;
     m_hBitmap = nullptr;

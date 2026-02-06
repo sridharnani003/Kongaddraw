@@ -8,7 +8,7 @@
  */
 
 #include "renderer/IRenderer.h"
-#include "logging/Logger.h"
+#include "core/Common.h"
 
 using namespace ldc;
 using namespace ldc::renderer;
@@ -24,6 +24,7 @@ public:
 
     bool Initialize(HWND hWnd, uint32_t width, uint32_t height, uint32_t bpp) override;
     void Shutdown() override;
+    bool IsInitialized() const override { return m_initialized; }
     void Present(const void* pixels, uint32_t pitch, uint32_t width, uint32_t height, uint32_t bpp) override;
     void SetPalette(const uint32_t* palette256) override;
     void SetVSync(bool enabled) override;
@@ -51,9 +52,8 @@ private:
 
     bool m_initialized = false;
 
-    bool CreateDIBSection();
-    void DestroyDIBSection();
-    void UpdatePaletteConversion();
+    bool CreateRenderDIB();
+    void DestroyRenderDIB();
 };
 
 // ============================================================================
@@ -72,7 +72,7 @@ GDIRenderer::~GDIRenderer() {
 }
 
 bool GDIRenderer::Initialize(HWND hWnd, uint32_t width, uint32_t height, uint32_t bpp) {
-    LOG_INFO("GDIRenderer::Initialize: %ux%u %ubpp", width, height, bpp);
+    DebugLog("GDIRenderer::Initialize: %ux%u %ubpp", width, height, bpp);
 
     if (m_initialized) {
         Shutdown();
@@ -90,55 +90,55 @@ bool GDIRenderer::Initialize(HWND hWnd, uint32_t width, uint32_t height, uint32_
     m_windowHeight = rect.bottom - rect.top;
 
     // Get window DC
-    m_hdcWindow = GetDC(hWnd);
+    m_hdcWindow = ::GetDC(hWnd);
     if (!m_hdcWindow) {
-        LOG_ERROR("GDIRenderer: Failed to get window DC");
+        DebugLog("GDIRenderer: Failed to get window DC");
         return false;
     }
 
     // Create memory DC
-    m_hdcMem = CreateCompatibleDC(m_hdcWindow);
+    m_hdcMem = ::CreateCompatibleDC(m_hdcWindow);
     if (!m_hdcMem) {
-        LOG_ERROR("GDIRenderer: Failed to create compatible DC");
-        ReleaseDC(hWnd, m_hdcWindow);
+        DebugLog("GDIRenderer: Failed to create compatible DC");
+        ::ReleaseDC(hWnd, m_hdcWindow);
         m_hdcWindow = nullptr;
         return false;
     }
 
     // Create DIB section
-    if (!CreateDIBSection()) {
-        LOG_ERROR("GDIRenderer: Failed to create DIB section");
-        DeleteDC(m_hdcMem);
-        ReleaseDC(hWnd, m_hdcWindow);
+    if (!CreateRenderDIB()) {
+        DebugLog("GDIRenderer: Failed to create DIB section");
+        ::DeleteDC(m_hdcMem);
+        ::ReleaseDC(hWnd, m_hdcWindow);
         m_hdcMem = nullptr;
         m_hdcWindow = nullptr;
         return false;
     }
 
     m_initialized = true;
-    LOG_INFO("GDIRenderer initialized successfully");
+    DebugLog("GDIRenderer initialized successfully");
     return true;
 }
 
 void GDIRenderer::Shutdown() {
-    LOG_DEBUG("GDIRenderer::Shutdown");
+    DebugLog("GDIRenderer::Shutdown");
 
-    DestroyDIBSection();
+    DestroyRenderDIB();
 
     if (m_hdcMem) {
-        DeleteDC(m_hdcMem);
+        ::DeleteDC(m_hdcMem);
         m_hdcMem = nullptr;
     }
 
     if (m_hdcWindow && m_hWnd) {
-        ReleaseDC(m_hWnd, m_hdcWindow);
+        ::ReleaseDC(m_hWnd, m_hdcWindow);
         m_hdcWindow = nullptr;
     }
 
     m_initialized = false;
 }
 
-bool GDIRenderer::CreateDIBSection() {
+bool GDIRenderer::CreateRenderDIB() {
     // Set up BITMAPINFO for 32-bit DIB
     ZeroMemory(&m_bitmapInfo, sizeof(m_bitmapInfo));
     m_bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -148,7 +148,8 @@ bool GDIRenderer::CreateDIBSection() {
     m_bitmapInfo.bmiHeader.biBitCount = 32;  // Always use 32-bit for rendering
     m_bitmapInfo.bmiHeader.biCompression = BI_RGB;
 
-    m_hBitmap = CreateDIBSection(
+    // Use global scope to call Windows API CreateDIBSection
+    m_hBitmap = ::CreateDIBSection(
         m_hdcMem,
         &m_bitmapInfo,
         DIB_RGB_COLORS,
@@ -158,24 +159,24 @@ bool GDIRenderer::CreateDIBSection() {
     );
 
     if (!m_hBitmap || !m_bitmapBits) {
-        LOG_ERROR("CreateDIBSection failed");
+        DebugLog("CreateDIBSection failed");
         return false;
     }
 
-    m_hBitmapOld = static_cast<HBITMAP>(SelectObject(m_hdcMem, m_hBitmap));
+    m_hBitmapOld = static_cast<HBITMAP>(::SelectObject(m_hdcMem, m_hBitmap));
 
-    LOG_DEBUG("Created DIB section: %ux%u", m_gameWidth, m_gameHeight);
+    DebugLog("Created DIB section: %ux%u", m_gameWidth, m_gameHeight);
     return true;
 }
 
-void GDIRenderer::DestroyDIBSection() {
+void GDIRenderer::DestroyRenderDIB() {
     if (m_hdcMem && m_hBitmapOld) {
-        SelectObject(m_hdcMem, m_hBitmapOld);
+        ::SelectObject(m_hdcMem, m_hBitmapOld);
         m_hBitmapOld = nullptr;
     }
 
     if (m_hBitmap) {
-        DeleteObject(m_hBitmap);
+        ::DeleteObject(m_hBitmap);
         m_hBitmap = nullptr;
     }
 
@@ -253,7 +254,7 @@ void GDIRenderer::Present(
     // Blit to window
     if (m_gameWidth == m_windowWidth && m_gameHeight == m_windowHeight) {
         // Direct blit (no scaling)
-        BitBlt(
+        ::BitBlt(
             m_hdcWindow,
             0, 0,
             m_gameWidth, m_gameHeight,
@@ -264,10 +265,10 @@ void GDIRenderer::Present(
     }
     else {
         // Scaled blit
-        SetStretchBltMode(m_hdcWindow, HALFTONE);
-        SetBrushOrgEx(m_hdcWindow, 0, 0, nullptr);
+        ::SetStretchBltMode(m_hdcWindow, HALFTONE);
+        ::SetBrushOrgEx(m_hdcWindow, 0, 0, nullptr);
 
-        StretchBlt(
+        ::StretchBlt(
             m_hdcWindow,
             0, 0,
             m_windowWidth, m_windowHeight,
@@ -282,15 +283,14 @@ void GDIRenderer::Present(
 void GDIRenderer::SetPalette(const uint32_t* palette256) {
     if (palette256) {
         memcpy(m_palette.data(), palette256, 256 * sizeof(uint32_t));
-        LOG_DEBUG("GDIRenderer: Palette updated");
+        DebugLog("GDIRenderer: Palette updated");
     }
 }
 
 void GDIRenderer::SetVSync(bool enabled) {
     // GDI doesn't support VSync directly
-    // We could use DWM composition for vsync but that's complex
     LDC_UNUSED(enabled);
-    LOG_DEBUG("GDIRenderer: VSync not supported in GDI mode");
+    DebugLog("GDIRenderer: VSync not supported in GDI mode");
 }
 
 RendererCaps GDIRenderer::GetCaps() const {
@@ -299,11 +299,13 @@ RendererCaps GDIRenderer::GetCaps() const {
     caps.supportsVSync = false;
     caps.maxTextureWidth = 8192;
     caps.maxTextureHeight = 8192;
+    caps.name = "GDI";
+    caps.version = "1.0";
     return caps;
 }
 
 void GDIRenderer::OnResize(uint32_t width, uint32_t height) {
-    LOG_DEBUG("GDIRenderer::OnResize: %ux%u", width, height);
+    DebugLog("GDIRenderer::OnResize: %ux%u", width, height);
 
     m_windowWidth = width;
     m_windowHeight = height;
