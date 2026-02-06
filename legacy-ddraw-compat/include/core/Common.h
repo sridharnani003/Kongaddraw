@@ -1,11 +1,12 @@
 /**
  * @file Common.h
- * @brief Common definitions for legacy-ddraw-compat
+ * @brief Common definitions for legacy-ddraw-compat (Pure C implementation)
  */
 
-#pragma once
+#ifndef LDC_COMMON_H
+#define LDC_COMMON_H
 
-// Windows headers - must be first
+/* Windows headers */
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -14,224 +15,143 @@
 #endif
 
 #include <windows.h>
-#include <windowsx.h>  // For GET_X_LPARAM, GET_Y_LPARAM
+#include <windowsx.h>
 #include <mmsystem.h>
-
-// DirectDraw header
 #include <ddraw.h>
 
-// Standard library
-#include <cstdint>
-#include <cstring>
-#include <cstdio>
-#include <cstdarg>
-#include <memory>
-#include <vector>
-#include <string>
-#include <mutex>
-#include <atomic>
-#include <array>
-#include <unordered_map>
-#include <functional>
-
-// Link required libraries
+/* Link required libraries */
 #pragma comment(lib, "winmm.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "user32.lib")
-#pragma comment(lib, "ddraw.lib")
 #pragma comment(lib, "dxguid.lib")
 
-namespace ldc {
+/* ============================================================================
+ * Macros
+ * ============================================================================ */
 
-#define LDC_UNUSED(x) (void)(x)
+#define LDC_UNUSED(x) ((void)(x))
 
-// ============================================================================
-// Log Level Enumeration
-// ============================================================================
+#define LDC_MAX_SURFACES 64
+#define LDC_MAX_PALETTES 16
+#define LDC_MAX_CLIPPERS 16
 
-enum class LogLevel {
-    Trace = 0,
-    Debug = 1,
-    Info = 2,
-    Warn = 3,
-    Error = 4
-};
+/* Safe release macro */
+#define LDC_SAFE_RELEASE(p) do { if (p) { (p)->lpVtbl->Release(p); (p) = NULL; } } while(0)
 
-inline const char* LogLevelToString(LogLevel level) {
-    switch (level) {
-        case LogLevel::Trace: return "TRACE";
-        case LogLevel::Debug: return "DEBUG";
-        case LogLevel::Info:  return "INFO";
-        case LogLevel::Warn:  return "WARN";
-        case LogLevel::Error: return "ERROR";
-        default: return "UNKNOWN";
-    }
-}
+/* ============================================================================
+ * Debug Logging
+ * ============================================================================ */
 
-inline LogLevel StringToLogLevel(const std::string& str) {
-    if (str == "TRACE" || str == "trace") return LogLevel::Trace;
-    if (str == "DEBUG" || str == "debug") return LogLevel::Debug;
-    if (str == "INFO" || str == "info") return LogLevel::Info;
-    if (str == "WARN" || str == "warn") return LogLevel::Warn;
-    if (str == "ERROR" || str == "error") return LogLevel::Error;
-    return LogLevel::Info;  // Default
-}
+#ifdef _DEBUG
+#define LDC_LOG(fmt, ...) LDC_DebugLog(fmt, ##__VA_ARGS__)
+#else
+#define LDC_LOG(fmt, ...) ((void)0)
+#endif
 
-// ============================================================================
-// Renderer Type Enumeration
-// ============================================================================
+void LDC_DebugLog(const char* fmt, ...);
 
-enum class RendererType {
-    Auto = 0,   // Auto-detect best available
-    GDI = 1,    // GDI (always available)
-    OpenGL = 2, // OpenGL
-    D3D9 = 3    // Direct3D 9
-};
+/* ============================================================================
+ * Global State Structure
+ * ============================================================================ */
 
-inline const char* RendererTypeToString(RendererType type) {
-    switch (type) {
-        case RendererType::Auto:   return "auto";
-        case RendererType::GDI:    return "gdi";
-        case RendererType::OpenGL: return "opengl";
-        case RendererType::D3D9:   return "d3d9";
-        default: return "unknown";
-    }
-}
+#define LDC_PALETTE_SIZE 256
 
-inline RendererType StringToRendererType(const std::string& str) {
-    if (str == "auto" || str == "Auto") return RendererType::Auto;
-    if (str == "gdi" || str == "GDI") return RendererType::GDI;
-    if (str == "opengl" || str == "OpenGL") return RendererType::OpenGL;
-    if (str == "d3d9" || str == "D3D9" || str == "direct3d9") return RendererType::D3D9;
-    return RendererType::Auto;  // Default
-}
+typedef struct LDC_GlobalState {
+    /* Module handle */
+    HMODULE hModule;
+    BOOL initialized;
 
-// ============================================================================
-// NonCopyable Base Class
-// ============================================================================
+    /* Window state */
+    HWND hWnd;
+    WNDPROC originalWndProc;
+    DWORD coopLevel;
 
-class NonCopyable {
-protected:
-    NonCopyable() = default;
-    ~NonCopyable() = default;
-    NonCopyable(const NonCopyable&) = delete;
-    NonCopyable& operator=(const NonCopyable&) = delete;
-};
+    /* Game's requested display mode */
+    DWORD gameWidth;
+    DWORD gameHeight;
+    DWORD gameBpp;
+    DWORD gameRefresh;
+    BOOL displayModeSet;
 
-// ============================================================================
-// Debug Logging
-// ============================================================================
+    /* Actual render target size */
+    DWORD renderWidth;
+    DWORD renderHeight;
 
-inline void DebugLog(const char* fmt, ...) {
-    char buffer[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    OutputDebugStringA(buffer);
-    OutputDebugStringA("\n");
-}
+    /* Scaling for mouse coordinates */
+    float scaleX;
+    float scaleY;
+    int offsetX;
+    int offsetY;
 
-// ============================================================================
-// Global State - Single point of state for the entire wrapper
-// ============================================================================
+    /* GDI rendering resources */
+    HDC hdcWindow;
+    HDC hdcMem;
+    HBITMAP hBitmap;
+    HBITMAP hBitmapOld;
+    void* bitmapBits;
+    DWORD bitmapWidth;
+    DWORD bitmapHeight;
 
-struct GlobalState {
-    // Module handle
-    HMODULE hModule = nullptr;
-    bool initialized = false;
+    /* Palette for 8-bit mode */
+    RGBQUAD palette[LDC_PALETTE_SIZE];
+    DWORD palette32[LDC_PALETTE_SIZE];
+    BOOL paletteChanged;
 
-    // Window state
-    HWND hWnd = nullptr;
-    WNDPROC originalWndProc = nullptr;
-    DWORD coopLevel = 0;
+    /* Primary surface pixel data */
+    BYTE* primaryPixels;
+    DWORD primarySize;
+    DWORD primaryPitch;
 
-    // Game's requested display mode
-    DWORD gameWidth = 640;
-    DWORD gameHeight = 480;
-    DWORD gameBpp = 8;
-    DWORD gameRefresh = 0;
-    bool displayModeSet = false;
+    /* Thread safety */
+    CRITICAL_SECTION renderLock;
 
-    // Actual render target size (window client area)
-    DWORD renderWidth = 640;
-    DWORD renderHeight = 480;
+    /* Statistics */
+    DWORD frameCount;
+    DWORD lastFpsTime;
+    DWORD fps;
 
-    // Scaling for mouse coordinates
-    float scaleX = 1.0f;
-    float scaleY = 1.0f;
-    int offsetX = 0;
-    int offsetY = 0;
+} LDC_GlobalState;
 
-    // GDI rendering resources
-    HDC hdcWindow = nullptr;
-    HDC hdcMem = nullptr;
-    HBITMAP hBitmap = nullptr;
-    HBITMAP hBitmapOld = nullptr;
-    void* bitmapBits = nullptr;
-    DWORD bitmapWidth = 0;
-    DWORD bitmapHeight = 0;
+/* Global state instance */
+extern LDC_GlobalState g_ldc;
 
-    // Palette for 8-bit mode (as RGBQUAD for SetDIBitsToDevice)
-    RGBQUAD palette[256] = {};
-    uint32_t palette32[256] = {};  // As ARGB for conversion
-    bool paletteChanged = true;
+/* ============================================================================
+ * Initialization / Cleanup
+ * ============================================================================ */
 
-    // Primary surface pixel data
-    std::vector<uint8_t> primaryPixels;
-    DWORD primaryPitch = 0;
+BOOL LDC_Initialize(void);
+void LDC_Shutdown(void);
 
-    // Converted 32-bit buffer for rendering
-    std::vector<uint32_t> renderBuffer;
+/* ============================================================================
+ * Rendering Functions
+ * ============================================================================ */
 
-    // Thread safety
-    std::recursive_mutex renderMutex;
+BOOL LDC_CreateRenderTarget(DWORD width, DWORD height, DWORD bpp);
+void LDC_DestroyRenderTarget(void);
+void LDC_PresentToScreen(const BYTE* pixels, DWORD width, DWORD height, DWORD pitch, DWORD bpp);
 
-    // Statistics
-    DWORD frameCount = 0;
-    DWORD lastFpsTime = 0;
-    DWORD fps = 0;
-};
+/* ============================================================================
+ * Window Management
+ * ============================================================================ */
 
-// Global state instance
-extern GlobalState g_state;
+void LDC_SubclassWindow(HWND hWnd);
+void LDC_UnsubclassWindow(void);
+void LDC_UpdateScaling(void);
+POINT LDC_TransformMouseToGame(POINT pt);
 
-// ============================================================================
-// Initialization / Cleanup
-// ============================================================================
+/* ============================================================================
+ * Forward Declarations for COM Objects
+ * ============================================================================ */
 
-bool InitializeWrapper();
-void ShutdownWrapper();
+typedef struct LDC_DirectDraw LDC_DirectDraw;
+typedef struct LDC_Surface LDC_Surface;
+typedef struct LDC_Palette LDC_Palette;
+typedef struct LDC_Clipper LDC_Clipper;
 
-// ============================================================================
-// Rendering
-// ============================================================================
+/* ============================================================================
+ * DirectDraw Object Creation
+ * ============================================================================ */
 
-bool CreateRenderTarget(DWORD width, DWORD height, DWORD bpp);
-void DestroyRenderTarget();
-void PresentPrimaryToScreen();
+HRESULT LDC_CreateDirectDraw(GUID* lpGUID, IDirectDraw7** lplpDD, IUnknown* pUnkOuter);
 
-// ============================================================================
-// Window Management
-// ============================================================================
-
-void SubclassWindow(HWND hWnd);
-void UnsubclassWindow();
-LRESULT CALLBACK WrapperWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-// ============================================================================
-// Mouse Coordinate Transformation
-// ============================================================================
-
-void UpdateScaling();
-POINT TransformMouseToGame(POINT pt);
-POINT TransformGameToScreen(POINT pt);
-
-// ============================================================================
-// Hooked Windows API Functions
-// ============================================================================
-
-void InstallMouseHooks();
-void RemoveMouseHooks();
-
-} // namespace ldc
+#endif /* LDC_COMMON_H */

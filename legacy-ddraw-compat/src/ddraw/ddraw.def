@@ -1,0 +1,15 @@
+; legacy-ddraw-compat module definition file
+; Exports DirectDraw API functions
+
+LIBRARY ddraw
+
+EXPORTS
+    DirectDrawCreate            @1
+    DirectDrawCreateEx          @2
+    DirectDrawCreateClipper     @3
+    DirectDrawEnumerateA        @4
+    DirectDrawEnumerateW        @5
+    DirectDrawEnumerateExA      @6
+    DirectDrawEnumerateExW      @7
+    DllGetClassObject           PRIVATE
+    DllCanUnloadNow             PRIVATE
