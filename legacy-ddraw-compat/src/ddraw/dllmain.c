@@ -225,9 +225,53 @@ void LDC_PresentToScreen(const BYTE* pixels, DWORD width, DWORD height, DWORD pi
         BitBlt(g_ldc.hdcWindow, 0, 0, width, height, g_ldc.hdcMem, 0, 0, SRCCOPY);
     }
     else {
-        SetStretchBltMode(g_ldc.hdcWindow, HALFTONE);
-        SetBrushOrgEx(g_ldc.hdcWindow, 0, 0, NULL);
-        StretchBlt(g_ldc.hdcWindow, 0, 0, windowWidth, windowHeight,
+        /* Use config setting for filtering mode */
+        int stretchMode = LDC_GetConfigBool("bilinear") ? HALFTONE : COLORONCOLOR;
+        SetStretchBltMode(g_ldc.hdcWindow, stretchMode);
+        if (stretchMode == HALFTONE) {
+            SetBrushOrgEx(g_ldc.hdcWindow, 0, 0, NULL);
+        }
+
+        /* Calculate destination rectangle based on scaling mode */
+        int destX = 0, destY = 0;
+        int destW = windowWidth, destH = windowHeight;
+
+        if (LDC_GetConfigBool("maintas")) {
+            /* Maintain aspect ratio */
+            float srcAspect = (float)width / height;
+            float dstAspect = (float)windowWidth / windowHeight;
+
+            if (srcAspect > dstAspect) {
+                /* Pillarbox (black bars on top/bottom) */
+                destW = windowWidth;
+                destH = (int)(windowWidth / srcAspect);
+                destY = (windowHeight - destH) / 2;
+            } else {
+                /* Letterbox (black bars on sides) */
+                destH = windowHeight;
+                destW = (int)(windowHeight * srcAspect);
+                destX = (windowWidth - destW) / 2;
+            }
+
+            /* Clear areas outside the game */
+            if (destX > 0 || destY > 0) {
+                HBRUSH blackBrush = (HBRUSH)GetStockObject(BLACK_BRUSH);
+                if (destX > 0) {
+                    RECT left = { 0, 0, destX, windowHeight };
+                    RECT right = { destX + destW, 0, windowWidth, windowHeight };
+                    FillRect(g_ldc.hdcWindow, &left, blackBrush);
+                    FillRect(g_ldc.hdcWindow, &right, blackBrush);
+                }
+                if (destY > 0) {
+                    RECT top = { 0, 0, windowWidth, destY };
+                    RECT bottom = { 0, destY + destH, windowWidth, windowHeight };
+                    FillRect(g_ldc.hdcWindow, &top, blackBrush);
+                    FillRect(g_ldc.hdcWindow, &bottom, blackBrush);
+                }
+            }
+        }
+
+        StretchBlt(g_ldc.hdcWindow, destX, destY, destW, destH,
                    g_ldc.hdcMem, 0, 0, width, height, SRCCOPY);
     }
 
@@ -350,6 +394,10 @@ BOOL LDC_Initialize(void)
     g_ldc.gameBpp = 8;
     g_ldc.scaleX = 1.0f;
     g_ldc.scaleY = 1.0f;
+
+    /* Load configuration from ddraw.ini */
+    LDC_LoadConfig();
+    LDC_ApplyConfig();
 
     timeBeginPeriod(1);
 

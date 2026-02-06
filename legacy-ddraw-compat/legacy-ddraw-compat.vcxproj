@@ -172,6 +172,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\ddraw\clipper.c" />
+    <ClCompile Include="src\ddraw\config.c" />
     <ClCompile Include="src\ddraw\ddraw_main.c" />
     <ClCompile Include="src\ddraw\dllmain.c" />
     <ClCompile Include="src\ddraw\palette.c" />

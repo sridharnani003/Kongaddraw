@@ -149,6 +149,15 @@ typedef struct LDC_Palette LDC_Palette;
 typedef struct LDC_Clipper LDC_Clipper;
 
 /* ============================================================================
+ * Configuration
+ * ============================================================================ */
+
+void LDC_LoadConfig(void);
+void LDC_ApplyConfig(void);
+BOOL LDC_GetConfigBool(const char* key);
+int LDC_GetConfigInt(const char* key);
+
+/* ============================================================================
  * DirectDraw Object Creation
  * ============================================================================ */
 

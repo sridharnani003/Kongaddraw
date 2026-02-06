@@ -35,6 +35,9 @@
     <ClCompile Include="src\ddraw\clipper.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\ddraw\config.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\ddraw\ddraw.def">
