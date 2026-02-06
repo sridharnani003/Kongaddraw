@@ -1,9 +1,6 @@
 /**
  * @file Common.h
- * @brief Common definitions and includes for legacy-ddraw-compat
- *
- * This header provides common type definitions, macros, and includes
- * used throughout the project.
+ * @brief Common definitions for legacy-ddraw-compat
  */
 
 #pragma once
@@ -12,230 +9,180 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 
 #include <windows.h>
+#include <windowsx.h>  // For GET_X_LPARAM, GET_Y_LPARAM
+#include <mmsystem.h>
 
-// DirectDraw headers
+// DirectDraw header
 #include <ddraw.h>
 
 // Standard library
 #include <cstdint>
-#include <cstddef>
+#include <cstring>
+#include <cstdio>
+#include <cstdarg>
 #include <memory>
-#include <string>
 #include <vector>
-#include <array>
+#include <string>
 #include <mutex>
 #include <atomic>
+#include <array>
+#include <unordered_map>
 #include <functional>
-#include <optional>
 
-// Project namespace
+// Link required libraries
+#pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "ddraw.lib")
+#pragma comment(lib, "dxguid.lib")
+
 namespace ldc {
 
-// ============================================================================
-// Version Information
-// ============================================================================
-
-constexpr uint32_t VERSION_MAJOR = 1;
-constexpr uint32_t VERSION_MINOR = 0;
-constexpr uint32_t VERSION_PATCH = 0;
-
-constexpr const char* VERSION_STRING = "1.0.0";
-constexpr const char* PROJECT_NAME = "legacy-ddraw-compat";
-
-// ============================================================================
-// Result Type
-// ============================================================================
-
-/**
- * @brief Result type for operations that can fail
- *
- * Wraps HRESULT but provides better semantics and error information.
- */
-class Result {
-public:
-    Result() : m_hr(DD_OK) {}
-    Result(HRESULT hr) : m_hr(hr) {}
-
-    bool IsSuccess() const { return SUCCEEDED(m_hr); }
-    bool IsFailure() const { return FAILED(m_hr); }
-    HRESULT GetHResult() const { return m_hr; }
-
-    operator HRESULT() const { return m_hr; }
-    explicit operator bool() const { return IsSuccess(); }
-
-    static Result Success() { return Result(DD_OK); }
-    static Result InvalidParams() { return Result(DDERR_INVALIDPARAMS); }
-    static Result OutOfMemory() { return Result(DDERR_OUTOFMEMORY); }
-    static Result Unsupported() { return Result(DDERR_UNSUPPORTED); }
-    static Result Generic() { return Result(DDERR_GENERIC); }
-
-private:
-    HRESULT m_hr;
-};
-
-// ============================================================================
-// Utility Macros
-// ============================================================================
-
-// Safe release for COM objects
-#define LDC_SAFE_RELEASE(p) \
-    do { if (p) { (p)->Release(); (p) = nullptr; } } while(0)
-
-// Array count
-template<typename T, size_t N>
-constexpr size_t ArrayCount(T(&)[N]) { return N; }
-
-// Unused parameter
 #define LDC_UNUSED(x) (void)(x)
 
-// Debug break
-#ifdef _DEBUG
-#define LDC_DEBUG_BREAK() __debugbreak()
-#else
-#define LDC_DEBUG_BREAK() ((void)0)
-#endif
-
-// Assert
-#ifdef _DEBUG
-#define LDC_ASSERT(condition) \
-    do { if (!(condition)) { LDC_DEBUG_BREAK(); } } while(0)
-#else
-#define LDC_ASSERT(condition) ((void)0)
-#endif
-
 // ============================================================================
-// Non-copyable Base Class
+// Log Level Enumeration
 // ============================================================================
 
-/**
- * @brief Base class to make derived classes non-copyable
- */
-class NonCopyable {
-protected:
-    NonCopyable() = default;
-    ~NonCopyable() = default;
-
-    NonCopyable(const NonCopyable&) = delete;
-    NonCopyable& operator=(const NonCopyable&) = delete;
-};
-
-// ============================================================================
-// Enumerations
-// ============================================================================
-
-/**
- * @brief Display mode types
- */
-enum class DisplayModeType {
-    Unknown,
-    Windowed,
-    BorderlessFullscreen,
-    ExclusiveFullscreen
-};
-
-/**
- * @brief Surface types
- */
-enum class SurfaceType {
-    Unknown,
-    Primary,
-    BackBuffer,
-    OffScreenPlain,
-    Texture,
-    ZBuffer
-};
-
-/**
- * @brief Surface memory location
- */
-enum class SurfaceLocation {
-    SystemMemory,
-    VideoMemory  // Emulated
-};
-
-/**
- * @brief Renderer types
- */
-enum class RendererType {
-    None,
-    GDI,
-    OpenGL,
-    Direct3D9,
-    Auto
-};
-
-/**
- * @brief Log levels
- */
 enum class LogLevel {
     Trace = 0,
     Debug = 1,
     Info = 2,
     Warn = 3,
-    Error = 4,
-    Off = 5
+    Error = 4
 };
 
 // ============================================================================
-// String Conversion Helpers
+// NonCopyable Base Class
 // ============================================================================
 
-/**
- * @brief Convert RendererType to string
- */
-inline const char* RendererTypeToString(RendererType type) {
-    switch (type) {
-        case RendererType::None: return "None";
-        case RendererType::GDI: return "GDI";
-        case RendererType::OpenGL: return "OpenGL";
-        case RendererType::Direct3D9: return "Direct3D9";
-        case RendererType::Auto: return "Auto";
-        default: return "Unknown";
-    }
+class NonCopyable {
+protected:
+    NonCopyable() = default;
+    ~NonCopyable() = default;
+    NonCopyable(const NonCopyable&) = delete;
+    NonCopyable& operator=(const NonCopyable&) = delete;
+};
+
+// ============================================================================
+// Debug Logging
+// ============================================================================
+
+inline void DebugLog(const char* fmt, ...) {
+    char buffer[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    OutputDebugStringA(buffer);
+    OutputDebugStringA("\n");
 }
 
-/**
- * @brief Convert LogLevel to string
- */
-inline const char* LogLevelToString(LogLevel level) {
-    switch (level) {
-        case LogLevel::Trace: return "TRACE";
-        case LogLevel::Debug: return "DEBUG";
-        case LogLevel::Info: return "INFO ";
-        case LogLevel::Warn: return "WARN ";
-        case LogLevel::Error: return "ERROR";
-        case LogLevel::Off: return "OFF  ";
-        default: return "?????";
-    }
-}
+// ============================================================================
+// Global State - Single point of state for the entire wrapper
+// ============================================================================
 
-/**
- * @brief Convert string to RendererType
- */
-inline RendererType StringToRendererType(const std::string& str) {
-    if (str == "gdi" || str == "GDI") return RendererType::GDI;
-    if (str == "opengl" || str == "OpenGL") return RendererType::OpenGL;
-    if (str == "d3d9" || str == "D3D9" || str == "direct3d9") return RendererType::Direct3D9;
-    return RendererType::Auto;
-}
+struct GlobalState {
+    // Module handle
+    HMODULE hModule = nullptr;
+    bool initialized = false;
 
-/**
- * @brief Convert string to LogLevel
- */
-inline LogLevel StringToLogLevel(const std::string& str) {
-    if (str == "trace" || str == "TRACE") return LogLevel::Trace;
-    if (str == "debug" || str == "DEBUG") return LogLevel::Debug;
-    if (str == "info" || str == "INFO") return LogLevel::Info;
-    if (str == "warn" || str == "WARN" || str == "warning") return LogLevel::Warn;
-    if (str == "error" || str == "ERROR") return LogLevel::Error;
-    if (str == "off" || str == "OFF" || str == "none") return LogLevel::Off;
-    return LogLevel::Info;
-}
+    // Window state
+    HWND hWnd = nullptr;
+    WNDPROC originalWndProc = nullptr;
+    DWORD coopLevel = 0;
+
+    // Game's requested display mode
+    DWORD gameWidth = 640;
+    DWORD gameHeight = 480;
+    DWORD gameBpp = 8;
+    DWORD gameRefresh = 0;
+    bool displayModeSet = false;
+
+    // Actual render target size (window client area)
+    DWORD renderWidth = 640;
+    DWORD renderHeight = 480;
+
+    // Scaling for mouse coordinates
+    float scaleX = 1.0f;
+    float scaleY = 1.0f;
+    int offsetX = 0;
+    int offsetY = 0;
+
+    // GDI rendering resources
+    HDC hdcWindow = nullptr;
+    HDC hdcMem = nullptr;
+    HBITMAP hBitmap = nullptr;
+    HBITMAP hBitmapOld = nullptr;
+    void* bitmapBits = nullptr;
+    DWORD bitmapWidth = 0;
+    DWORD bitmapHeight = 0;
+
+    // Palette for 8-bit mode (as RGBQUAD for SetDIBitsToDevice)
+    RGBQUAD palette[256] = {};
+    uint32_t palette32[256] = {};  // As ARGB for conversion
+    bool paletteChanged = true;
+
+    // Primary surface pixel data
+    std::vector<uint8_t> primaryPixels;
+    DWORD primaryPitch = 0;
+
+    // Converted 32-bit buffer for rendering
+    std::vector<uint32_t> renderBuffer;
+
+    // Thread safety
+    std::recursive_mutex renderMutex;
+
+    // Statistics
+    DWORD frameCount = 0;
+    DWORD lastFpsTime = 0;
+    DWORD fps = 0;
+};
+
+// Global state instance
+extern GlobalState g_state;
+
+// ============================================================================
+// Initialization / Cleanup
+// ============================================================================
+
+bool InitializeWrapper();
+void ShutdownWrapper();
+
+// ============================================================================
+// Rendering
+// ============================================================================
+
+bool CreateRenderTarget(DWORD width, DWORD height, DWORD bpp);
+void DestroyRenderTarget();
+void PresentPrimaryToScreen();
+
+// ============================================================================
+// Window Management
+// ============================================================================
+
+void SubclassWindow(HWND hWnd);
+void UnsubclassWindow();
+LRESULT CALLBACK WrapperWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+// ============================================================================
+// Mouse Coordinate Transformation
+// ============================================================================
+
+void UpdateScaling();
+POINT TransformMouseToGame(POINT pt);
+POINT TransformGameToScreen(POINT pt);
+
+// ============================================================================
+// Hooked Windows API Functions
+// ============================================================================
+
+void InstallMouseHooks();
+void RemoveMouseHooks();
 
 } // namespace ldc

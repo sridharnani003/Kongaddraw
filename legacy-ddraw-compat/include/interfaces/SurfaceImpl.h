@@ -1,16 +1,13 @@
 /**
  * @file SurfaceImpl.h
- * @brief IDirectDrawSurface interface implementation
+ * @brief IDirectDrawSurface7 interface implementation
  *
- * Implements the IDirectDrawSurface through IDirectDrawSurface7 COM interfaces.
+ * Implements the IDirectDrawSurface7 COM interface for the compatibility layer.
  */
 
 #pragma once
 
 #include "core/Common.h"
-#include <atomic>
-#include <mutex>
-#include <vector>
 
 namespace ldc::interfaces {
 
@@ -20,17 +17,22 @@ class PaletteImpl;
 class ClipperImpl;
 
 /**
- * @brief Surface data storage
+ * @brief GUID hash functor for unordered_map
  */
-struct SurfaceData {
-    uint32_t width = 0;
-    uint32_t height = 0;
-    uint32_t bpp = 0;
-    uint32_t pitch = 0;
-    std::vector<uint8_t> pixels;
-    DDSCAPS2 caps{};
-    DDPIXELFORMAT pixelFormat{};
-    DWORD flags = 0;
+struct GuidHash {
+    size_t operator()(const GUID& guid) const {
+        const uint64_t* p = reinterpret_cast<const uint64_t*>(&guid);
+        return std::hash<uint64_t>()(p[0]) ^ std::hash<uint64_t>()(p[1]);
+    }
+};
+
+/**
+ * @brief GUID equality functor for unordered_map
+ */
+struct GuidEqual {
+    bool operator()(const GUID& lhs, const GUID& rhs) const {
+        return memcmp(&lhs, &rhs, sizeof(GUID)) == 0;
+    }
 };
 
 /**
@@ -59,7 +61,7 @@ public:
     ULONG STDMETHODCALLTYPE Release() override;
 
     // ========================================================================
-    // IDirectDrawSurface Methods
+    // IDirectDrawSurface7 Methods
     // ========================================================================
 
     HRESULT STDMETHODCALLTYPE AddAttachedSurface(LPDIRECTDRAWSURFACE7 lpDDSAttachedSurface) override;
@@ -96,34 +98,22 @@ public:
     HRESULT STDMETHODCALLTYPE UpdateOverlayDisplay(DWORD dwFlags) override;
     HRESULT STDMETHODCALLTYPE UpdateOverlayZOrder(DWORD dwFlags, LPDIRECTDRAWSURFACE7 lpDDSReference) override;
 
-    // ========================================================================
-    // IDirectDrawSurface2 Methods
-    // ========================================================================
-
+    // IDirectDrawSurface2 methods
     HRESULT STDMETHODCALLTYPE GetDDInterface(LPVOID* lplpDD) override;
     HRESULT STDMETHODCALLTYPE PageLock(DWORD dwFlags) override;
     HRESULT STDMETHODCALLTYPE PageUnlock(DWORD dwFlags) override;
 
-    // ========================================================================
-    // IDirectDrawSurface3 Methods
-    // ========================================================================
-
+    // IDirectDrawSurface3 methods
     HRESULT STDMETHODCALLTYPE SetSurfaceDesc(LPDDSURFACEDESC2 lpDDSD, DWORD dwFlags) override;
 
-    // ========================================================================
-    // IDirectDrawSurface4 Methods
-    // ========================================================================
-
+    // IDirectDrawSurface4 methods
     HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID guidTag, LPVOID lpData, DWORD cbSize, DWORD dwFlags) override;
     HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID guidTag, LPVOID lpBuffer, LPDWORD lpcbBufferSize) override;
     HRESULT STDMETHODCALLTYPE FreePrivateData(REFGUID guidTag) override;
     HRESULT STDMETHODCALLTYPE GetUniquenessValue(LPDWORD lpValue) override;
     HRESULT STDMETHODCALLTYPE ChangeUniquenessValue() override;
 
-    // ========================================================================
-    // IDirectDrawSurface7 Methods
-    // ========================================================================
-
+    // IDirectDrawSurface7 methods
     HRESULT STDMETHODCALLTYPE SetPriority(DWORD dwPriority) override;
     HRESULT STDMETHODCALLTYPE GetPriority(LPDWORD lpdwPriority) override;
     HRESULT STDMETHODCALLTYPE SetLOD(DWORD dwMaxLOD) override;
@@ -133,18 +123,15 @@ public:
     // Internal Methods
     // ========================================================================
 
-    /** Get surface data */
-    const SurfaceData& GetData() const { return m_data; }
-
-    /** Get raw pixel data */
-    void* GetPixels() { return m_data.pixels.data(); }
-    const void* GetPixels() const { return m_data.pixels.data(); }
+    /** Get raw pixel data pointer */
+    void* GetPixels() { return m_pixels.data(); }
+    const void* GetPixels() const { return m_pixels.data(); }
 
     /** Check if this is a primary surface */
-    bool IsPrimary() const;
+    bool IsPrimary() const { return (m_caps.dwCaps & DDSCAPS_PRIMARYSURFACE) != 0; }
 
     /** Check if this is a back buffer */
-    bool IsBackBuffer() const;
+    bool IsBackBuffer() const { return (m_caps.dwCaps & DDSCAPS_BACKBUFFER) != 0; }
 
     /** Set back buffer in chain */
     void SetBackBuffer(SurfaceImpl* pBack) { m_backBuffer = pBack; }
@@ -153,34 +140,51 @@ public:
     SurfaceImpl* GetBackBuffer() const { return m_backBuffer; }
 
     /** Get width */
-    uint32_t GetWidth() const { return m_data.width; }
+    DWORD GetWidth() const { return m_width; }
 
     /** Get height */
-    uint32_t GetHeight() const { return m_data.height; }
+    DWORD GetHeight() const { return m_height; }
 
     /** Get bits per pixel */
-    uint32_t GetBpp() const { return m_data.bpp; }
+    DWORD GetBpp() const { return m_bpp; }
 
     /** Get pitch (bytes per row) */
-    uint32_t GetPitch() const { return m_data.pitch; }
+    DWORD GetPitch() const { return m_pitch; }
 
-    /** Notify that surface content changed (for rendering) */
+    /** Notify that surface content changed (triggers rendering for primary) */
     void NotifyContentChanged();
 
 private:
     std::atomic<ULONG> m_refCount{1};
 
+    // Parent DirectDraw object
     DirectDrawImpl* m_parent;
-    SurfaceData m_data;
+
+    // Surface properties
+    DWORD m_width = 0;
+    DWORD m_height = 0;
+    DWORD m_bpp = 0;
+    DWORD m_pitch = 0;
+    DDSCAPS2 m_caps{};
+    DDPIXELFORMAT m_pixelFormat{};
+    DWORD m_flags = 0;
+
+    // Pixel data storage
+    std::vector<uint8_t> m_pixels;
+
+    // Attached surfaces
     SurfaceImpl* m_backBuffer = nullptr;
+
+    // Associated objects
     PaletteImpl* m_palette = nullptr;
     ClipperImpl* m_clipper = nullptr;
 
+    // Lock state
     bool m_locked = false;
     RECT m_lockedRect{};
     std::mutex m_lockMutex;
 
-    // Color key
+    // Color keys
     DDCOLORKEY m_srcColorKey{};
     DDCOLORKEY m_destColorKey{};
     bool m_hasSrcColorKey = false;
@@ -191,24 +195,19 @@ private:
     HBITMAP m_hBitmap = nullptr;
     HBITMAP m_hBitmapOld = nullptr;
 
-    // Private data storage
-    std::unordered_map<GUID, std::vector<uint8_t>, struct GuidHash> m_privateData;
+    // Private data storage (using GuidHash defined at top of file)
+    std::unordered_map<GUID, std::vector<uint8_t>, GuidHash, GuidEqual> m_privateData;
 
     // Uniqueness value
     DWORD m_uniquenessValue = 0;
 
+    // Priority and LOD
+    DWORD m_priority = 0;
+    DWORD m_lod = 0;
+
     // Helper methods
     void InitializePixelFormat();
     void AllocatePixelData();
-    HRESULT BlitInternal(const RECT& dstRect, SurfaceImpl* pSrc, const RECT& srcRect, DWORD flags, const DDBLTFX* pFx);
-
-    // GUID hash for unordered_map
-    struct GuidHash {
-        size_t operator()(const GUID& guid) const {
-            const uint64_t* p = reinterpret_cast<const uint64_t*>(&guid);
-            return std::hash<uint64_t>()(p[0]) ^ std::hash<uint64_t>()(p[1]);
-        }
-    };
 };
 
 } // namespace ldc::interfaces

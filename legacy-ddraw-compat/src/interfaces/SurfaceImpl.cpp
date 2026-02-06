@@ -1,29 +1,14 @@
 /**
  * @file SurfaceImpl.cpp
- * @brief IDirectDrawSurface interface implementation
+ * @brief IDirectDrawSurface7 interface implementation
  */
 
 #include "interfaces/SurfaceImpl.h"
 #include "interfaces/DirectDrawImpl.h"
-#include "logging/Logger.h"
+#include "core/Common.h"
 
 using namespace ldc;
 using namespace ldc::interfaces;
-
-// ============================================================================
-// Surface GUIDs
-// ============================================================================
-
-#ifndef DEFINE_GUID_INLINE
-#define DEFINE_GUID_INLINE(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
-    static const GUID name = { l, w1, w2, { b1, b2, b3, b4, b5, b6, b7, b8 } }
-#endif
-
-DEFINE_GUID_INLINE(LOCAL_IID_IDirectDrawSurface,  0x6C14DB81,0xA733,0x11CE,0xA5,0x21,0x00,0x20,0xAF,0x0B,0xE5,0x60);
-DEFINE_GUID_INLINE(LOCAL_IID_IDirectDrawSurface2, 0x57805885,0x6eec,0x11cf,0x94,0x41,0xa8,0x23,0x03,0xc1,0x0e,0x27);
-DEFINE_GUID_INLINE(LOCAL_IID_IDirectDrawSurface3, 0xDA044E00,0x69B2,0x11D0,0xA1,0xD5,0x00,0xAA,0x00,0xB8,0xDF,0xBB);
-DEFINE_GUID_INLINE(LOCAL_IID_IDirectDrawSurface4, 0x0B2B8630,0xAD35,0x11D0,0x8E,0xA6,0x00,0x60,0x97,0x97,0xEA,0x5B);
-DEFINE_GUID_INLINE(LOCAL_IID_IDirectDrawSurface7, 0x06675a80,0x3b9b,0x11d2,0xb9,0x2f,0x00,0x60,0x97,0x97,0xea,0x5b);
 
 // ============================================================================
 // SurfaceImpl Implementation
@@ -32,55 +17,65 @@ DEFINE_GUID_INLINE(LOCAL_IID_IDirectDrawSurface7, 0x06675a80,0x3b9b,0x11d2,0xb9,
 SurfaceImpl::SurfaceImpl(DirectDrawImpl* parent, const DDSURFACEDESC2& desc)
     : m_refCount(1)
     , m_parent(parent)
+    , m_width(0)
+    , m_height(0)
+    , m_bpp(0)
+    , m_pitch(0)
+    , m_caps{}
+    , m_pixelFormat{}
+    , m_flags(0)
+    , m_backBuffer(nullptr)
+    , m_palette(nullptr)
+    , m_clipper(nullptr)
+    , m_locked(false)
+    , m_lockedRect{}
+    , m_srcColorKey{}
+    , m_destColorKey{}
+    , m_hasSrcColorKey(false)
+    , m_hasDestColorKey(false)
+    , m_hDC(nullptr)
+    , m_hBitmap(nullptr)
+    , m_hBitmapOld(nullptr)
+    , m_uniquenessValue(0)
+    , m_priority(0)
+    , m_lod(0)
 {
-    LOG_DEBUG("SurfaceImpl creating surface");
+    DebugLog("SurfaceImpl creating surface");
 
     // Copy flags and caps
-    m_data.flags = desc.dwFlags;
+    m_flags = desc.dwFlags;
     if (desc.dwFlags & DDSD_CAPS) {
-        m_data.caps = desc.ddsCaps;
+        m_caps = desc.ddsCaps;
     }
 
     // Determine dimensions
     if (desc.dwFlags & DDSD_WIDTH) {
-        m_data.width = desc.dwWidth;
+        m_width = desc.dwWidth;
     } else if (IsPrimary()) {
-        // Primary surface uses display mode dimensions
-        DDSURFACEDESC2 displayMode{};
-        displayMode.dwSize = sizeof(DDSURFACEDESC2);
-        parent->GetDisplayMode(&displayMode);
-        m_data.width = displayMode.dwWidth;
+        m_width = g_state.gameWidth;
     }
 
     if (desc.dwFlags & DDSD_HEIGHT) {
-        m_data.height = desc.dwHeight;
+        m_height = desc.dwHeight;
     } else if (IsPrimary()) {
-        DDSURFACEDESC2 displayMode{};
-        displayMode.dwSize = sizeof(DDSURFACEDESC2);
-        parent->GetDisplayMode(&displayMode);
-        m_data.height = displayMode.dwHeight;
+        m_height = g_state.gameHeight;
     }
 
     // Determine pixel format
     if (desc.dwFlags & DDSD_PIXELFORMAT) {
-        m_data.pixelFormat = desc.ddpfPixelFormat;
-        m_data.bpp = desc.ddpfPixelFormat.dwRGBBitCount;
-    } else {
-        // Default to display mode format
-        DDSURFACEDESC2 displayMode{};
-        displayMode.dwSize = sizeof(DDSURFACEDESC2);
-        parent->GetDisplayMode(&displayMode);
-        m_data.bpp = displayMode.ddpfPixelFormat.dwRGBBitCount;
-        m_data.pixelFormat = displayMode.ddpfPixelFormat;
+        m_pixelFormat = desc.ddpfPixelFormat;
+        m_bpp = desc.ddpfPixelFormat.dwRGBBitCount;
+    } else if (IsPrimary()) {
+        m_bpp = g_state.gameBpp;
     }
 
     // Ensure we have valid dimensions and bpp
-    if (m_data.width == 0) m_data.width = 640;
-    if (m_data.height == 0) m_data.height = 480;
-    if (m_data.bpp == 0) m_data.bpp = 32;
+    if (m_width == 0) m_width = 640;
+    if (m_height == 0) m_height = 480;
+    if (m_bpp == 0) m_bpp = 8;
 
     // Calculate pitch (align to 4 bytes)
-    m_data.pitch = ((m_data.width * (m_data.bpp / 8) + 3) / 4) * 4;
+    m_pitch = ((m_width * (m_bpp / 8) + 3) / 4) * 4;
 
     // Initialize pixel format if not set
     InitializePixelFormat();
@@ -88,12 +83,23 @@ SurfaceImpl::SurfaceImpl(DirectDrawImpl* parent, const DDSURFACEDESC2& desc)
     // Allocate pixel data
     AllocatePixelData();
 
-    LOG_INFO("SurfaceImpl created: %ux%u %ubpp pitch=%u",
-             m_data.width, m_data.height, m_data.bpp, m_data.pitch);
+    // Handle back buffer creation for flip chains
+    if ((desc.dwFlags & DDSD_BACKBUFFERCOUNT) && desc.dwBackBufferCount > 0) {
+        DDSURFACEDESC2 backDesc = desc;
+        backDesc.ddsCaps.dwCaps = (backDesc.ddsCaps.dwCaps & ~DDSCAPS_PRIMARYSURFACE) | DDSCAPS_BACKBUFFER;
+        backDesc.dwFlags &= ~DDSD_BACKBUFFERCOUNT;
+        backDesc.dwBackBufferCount = 0;
+
+        m_backBuffer = new SurfaceImpl(parent, backDesc);
+        DebugLog("Created back buffer for flip chain");
+    }
+
+    DebugLog("SurfaceImpl created: %ux%u %ubpp pitch=%u caps=0x%08X",
+             m_width, m_height, m_bpp, m_pitch, m_caps.dwCaps);
 }
 
 SurfaceImpl::~SurfaceImpl() {
-    LOG_DEBUG("SurfaceImpl destroyed");
+    DebugLog("SurfaceImpl destroyed");
 
     // Clean up GDI resources
     if (m_hDC) {
@@ -107,53 +113,64 @@ SurfaceImpl::~SurfaceImpl() {
         DeleteObject(m_hBitmap);
         m_hBitmap = nullptr;
     }
+
+    // Release back buffer
+    if (m_backBuffer) {
+        m_backBuffer->Release();
+        m_backBuffer = nullptr;
+    }
 }
 
 void SurfaceImpl::InitializePixelFormat() {
-    m_data.pixelFormat.dwSize = sizeof(DDPIXELFORMAT);
+    m_pixelFormat.dwSize = sizeof(DDPIXELFORMAT);
+    m_pixelFormat.dwRGBBitCount = m_bpp;
 
-    if (m_data.bpp == 8) {
-        m_data.pixelFormat.dwFlags = DDPF_PALETTEINDEXED8 | DDPF_RGB;
-        m_data.pixelFormat.dwRGBBitCount = 8;
-    } else if (m_data.bpp == 16) {
-        m_data.pixelFormat.dwFlags = DDPF_RGB;
-        m_data.pixelFormat.dwRGBBitCount = 16;
+    if (m_bpp == 8) {
+        m_pixelFormat.dwFlags = DDPF_PALETTEINDEXED8 | DDPF_RGB;
+    } else if (m_bpp == 16) {
+        m_pixelFormat.dwFlags = DDPF_RGB;
         // RGB565
-        m_data.pixelFormat.dwRBitMask = 0xF800;
-        m_data.pixelFormat.dwGBitMask = 0x07E0;
-        m_data.pixelFormat.dwBBitMask = 0x001F;
-    } else if (m_data.bpp == 24) {
-        m_data.pixelFormat.dwFlags = DDPF_RGB;
-        m_data.pixelFormat.dwRGBBitCount = 24;
-        m_data.pixelFormat.dwRBitMask = 0x00FF0000;
-        m_data.pixelFormat.dwGBitMask = 0x0000FF00;
-        m_data.pixelFormat.dwBBitMask = 0x000000FF;
+        m_pixelFormat.dwRBitMask = 0xF800;
+        m_pixelFormat.dwGBitMask = 0x07E0;
+        m_pixelFormat.dwBBitMask = 0x001F;
+    } else if (m_bpp == 24) {
+        m_pixelFormat.dwFlags = DDPF_RGB;
+        m_pixelFormat.dwRBitMask = 0x00FF0000;
+        m_pixelFormat.dwGBitMask = 0x0000FF00;
+        m_pixelFormat.dwBBitMask = 0x000000FF;
     } else {
         // 32-bit XRGB
-        m_data.pixelFormat.dwFlags = DDPF_RGB;
-        m_data.pixelFormat.dwRGBBitCount = 32;
-        m_data.pixelFormat.dwRBitMask = 0x00FF0000;
-        m_data.pixelFormat.dwGBitMask = 0x0000FF00;
-        m_data.pixelFormat.dwBBitMask = 0x000000FF;
+        m_pixelFormat.dwFlags = DDPF_RGB;
+        m_pixelFormat.dwRBitMask = 0x00FF0000;
+        m_pixelFormat.dwGBitMask = 0x0000FF00;
+        m_pixelFormat.dwBBitMask = 0x000000FF;
     }
 }
 
 void SurfaceImpl::AllocatePixelData() {
-    size_t size = static_cast<size_t>(m_data.pitch) * m_data.height;
-    m_data.pixels.resize(size, 0);
-    LOG_DEBUG("Allocated %zu bytes for surface pixels", size);
-}
-
-bool SurfaceImpl::IsPrimary() const {
-    return (m_data.caps.dwCaps & DDSCAPS_PRIMARYSURFACE) != 0;
-}
-
-bool SurfaceImpl::IsBackBuffer() const {
-    return (m_data.caps.dwCaps & DDSCAPS_BACKBUFFER) != 0;
+    size_t size = static_cast<size_t>(m_pitch) * m_height;
+    m_pixels.resize(size, 0);
+    DebugLog("Allocated %zu bytes for surface pixels", size);
 }
 
 void SurfaceImpl::NotifyContentChanged() {
-    // TODO: Notify renderer that surface content has changed
+    // If this is the primary surface, copy to global state and present
+    if (IsPrimary()) {
+        std::lock_guard<std::recursive_mutex> lock(g_state.renderMutex);
+
+        // Copy pixel data to global state
+        if (g_state.primaryPixels.size() == m_pixels.size()) {
+            memcpy(g_state.primaryPixels.data(), m_pixels.data(), m_pixels.size());
+        } else {
+            g_state.primaryPixels = m_pixels;
+            g_state.primaryPitch = m_pitch;
+        }
+
+        // Present to screen
+        PresentPrimaryToScreen();
+    }
+
+    m_uniquenessValue++;
 }
 
 // ============================================================================
@@ -168,11 +185,11 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::QueryInterface(REFIID riid, void** ppvObj
     *ppvObj = nullptr;
 
     if (riid == IID_IUnknown ||
-        riid == LOCAL_IID_IDirectDrawSurface ||
-        riid == LOCAL_IID_IDirectDrawSurface2 ||
-        riid == LOCAL_IID_IDirectDrawSurface3 ||
-        riid == LOCAL_IID_IDirectDrawSurface4 ||
-        riid == LOCAL_IID_IDirectDrawSurface7) {
+        riid == IID_IDirectDrawSurface ||
+        riid == IID_IDirectDrawSurface2 ||
+        riid == IID_IDirectDrawSurface3 ||
+        riid == IID_IDirectDrawSurface4 ||
+        riid == IID_IDirectDrawSurface7) {
 
         AddRef();
         *ppvObj = static_cast<IDirectDrawSurface7*>(this);
@@ -205,8 +222,7 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::Lock(
     HANDLE hEvent)
 {
     LDC_UNUSED(hEvent);
-
-    LOG_TRACE("Lock: flags=0x%08X", dwFlags);
+    LDC_UNUSED(dwFlags);
 
     if (!lpDDSurfaceDesc) {
         return DDERR_INVALIDPARAMS;
@@ -221,23 +237,24 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::Lock(
     // Fill in surface description
     ZeroMemory(lpDDSurfaceDesc, sizeof(DDSURFACEDESC2));
     lpDDSurfaceDesc->dwSize = sizeof(DDSURFACEDESC2);
-    lpDDSurfaceDesc->dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PITCH | DDSD_PIXELFORMAT | DDSD_LPSURFACE;
-    lpDDSurfaceDesc->dwWidth = m_data.width;
-    lpDDSurfaceDesc->dwHeight = m_data.height;
-    lpDDSurfaceDesc->lPitch = m_data.pitch;
-    lpDDSurfaceDesc->ddpfPixelFormat = m_data.pixelFormat;
+    lpDDSurfaceDesc->dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PITCH | DDSD_PIXELFORMAT | DDSD_LPSURFACE | DDSD_CAPS;
+    lpDDSurfaceDesc->dwWidth = m_width;
+    lpDDSurfaceDesc->dwHeight = m_height;
+    lpDDSurfaceDesc->lPitch = m_pitch;
+    lpDDSurfaceDesc->ddpfPixelFormat = m_pixelFormat;
+    lpDDSurfaceDesc->ddsCaps = m_caps;
 
     // Calculate surface pointer
     if (lpDestRect) {
         // Lock specific region
-        size_t offset = lpDestRect->top * m_data.pitch +
-                        lpDestRect->left * (m_data.bpp / 8);
-        lpDDSurfaceDesc->lpSurface = m_data.pixels.data() + offset;
+        size_t offset = lpDestRect->top * m_pitch +
+                        lpDestRect->left * (m_bpp / 8);
+        lpDDSurfaceDesc->lpSurface = m_pixels.data() + offset;
         m_lockedRect = *lpDestRect;
     } else {
         // Lock entire surface
-        lpDDSurfaceDesc->lpSurface = m_data.pixels.data();
-        m_lockedRect = { 0, 0, static_cast<LONG>(m_data.width), static_cast<LONG>(m_data.height) };
+        lpDDSurfaceDesc->lpSurface = m_pixels.data();
+        m_lockedRect = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
     }
 
     m_locked = true;
@@ -247,8 +264,6 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::Lock(
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::Unlock(LPRECT lpRect) {
     LDC_UNUSED(lpRect);
-
-    LOG_TRACE("Unlock");
 
     std::lock_guard<std::mutex> lock(m_lockMutex);
 
@@ -269,9 +284,6 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::Blt(
     DWORD dwFlags,
     LPDDBLTFX lpDDBltFx)
 {
-    LOG_TRACE("Blt: flags=0x%08X", dwFlags);
-
-    // Get source surface
     SurfaceImpl* pSrc = static_cast<SurfaceImpl*>(lpDDSrcSurface);
 
     // Determine destination rectangle
@@ -279,82 +291,21 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::Blt(
     if (lpDestRect) {
         dstRect = *lpDestRect;
     } else {
-        dstRect = { 0, 0, static_cast<LONG>(m_data.width), static_cast<LONG>(m_data.height) };
+        dstRect = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
     }
 
-    // Determine source rectangle
-    RECT srcRect;
-    if (lpSrcRect) {
-        srcRect = *lpSrcRect;
-    } else if (pSrc) {
-        srcRect = { 0, 0, static_cast<LONG>(pSrc->m_data.width), static_cast<LONG>(pSrc->m_data.height) };
-    } else {
-        srcRect = { 0, 0, 0, 0 };
-    }
-
-    return BlitInternal(dstRect, pSrc, srcRect, dwFlags, lpDDBltFx);
-}
-
-HRESULT STDMETHODCALLTYPE SurfaceImpl::BltFast(
-    DWORD dwX,
-    DWORD dwY,
-    LPDIRECTDRAWSURFACE7 lpDDSrcSurface,
-    LPRECT lpSrcRect,
-    DWORD dwTrans)
-{
-    LOG_TRACE("BltFast: x=%u y=%u flags=0x%08X", dwX, dwY, dwTrans);
-
-    if (!lpDDSrcSurface) {
-        return DDERR_INVALIDPARAMS;
-    }
-
-    SurfaceImpl* pSrc = static_cast<SurfaceImpl*>(lpDDSrcSurface);
-
-    // Determine source rectangle
-    RECT srcRect;
-    if (lpSrcRect) {
-        srcRect = *lpSrcRect;
-    } else {
-        srcRect = { 0, 0, static_cast<LONG>(pSrc->m_data.width), static_cast<LONG>(pSrc->m_data.height) };
-    }
-
-    // Calculate destination rectangle
-    LONG width = srcRect.right - srcRect.left;
-    LONG height = srcRect.bottom - srcRect.top;
-    RECT dstRect = { static_cast<LONG>(dwX), static_cast<LONG>(dwY),
-                     static_cast<LONG>(dwX) + width, static_cast<LONG>(dwY) + height };
-
-    // Convert flags
-    DWORD flags = 0;
-    if (dwTrans & DDBLTFAST_SRCCOLORKEY) {
-        flags |= DDBLT_KEYSRC;
-    }
-    if (dwTrans & DDBLTFAST_DESTCOLORKEY) {
-        flags |= DDBLT_KEYDEST;
-    }
-
-    return BlitInternal(dstRect, pSrc, srcRect, flags, nullptr);
-}
-
-HRESULT SurfaceImpl::BlitInternal(
-    const RECT& dstRect,
-    SurfaceImpl* pSrc,
-    const RECT& srcRect,
-    DWORD flags,
-    const DDBLTFX* pFx)
-{
     // Color fill operation
-    if (flags & DDBLT_COLORFILL) {
-        if (!pFx) {
+    if (dwFlags & DDBLT_COLORFILL) {
+        if (!lpDDBltFx) {
             return DDERR_INVALIDPARAMS;
         }
 
-        uint32_t color = pFx->dwFillColor;
-        uint32_t bytesPerPixel = m_data.bpp / 8;
+        DWORD color = lpDDBltFx->dwFillColor;
+        DWORD bytesPerPixel = m_bpp / 8;
 
-        for (LONG y = dstRect.top; y < dstRect.bottom && y < static_cast<LONG>(m_data.height); ++y) {
-            uint8_t* row = m_data.pixels.data() + y * m_data.pitch + dstRect.left * bytesPerPixel;
-            for (LONG x = dstRect.left; x < dstRect.right && x < static_cast<LONG>(m_data.width); ++x) {
+        for (LONG y = dstRect.top; y < dstRect.bottom && y < static_cast<LONG>(m_height); ++y) {
+            uint8_t* row = m_pixels.data() + y * m_pitch + dstRect.left * bytesPerPixel;
+            for (LONG x = dstRect.left; x < dstRect.right && x < static_cast<LONG>(m_width); ++x) {
                 if (bytesPerPixel == 1) {
                     *row = static_cast<uint8_t>(color);
                 } else if (bytesPerPixel == 2) {
@@ -372,29 +323,34 @@ HRESULT SurfaceImpl::BlitInternal(
 
     // Source blit operation
     if (pSrc) {
-        // Simple blit without scaling
-        uint32_t bytesPerPixel = m_data.bpp / 8;
+        RECT srcRect;
+        if (lpSrcRect) {
+            srcRect = *lpSrcRect;
+        } else {
+            srcRect = { 0, 0, static_cast<LONG>(pSrc->m_width), static_cast<LONG>(pSrc->m_height) };
+        }
+
+        DWORD bytesPerPixel = m_bpp / 8;
         LONG srcWidth = srcRect.right - srcRect.left;
         LONG srcHeight = srcRect.bottom - srcRect.top;
         LONG dstWidth = dstRect.right - dstRect.left;
         LONG dstHeight = dstRect.bottom - dstRect.top;
 
-        // For simplicity, do a direct copy if sizes match
         LONG copyWidth = (srcWidth < dstWidth) ? srcWidth : dstWidth;
         LONG copyHeight = (srcHeight < dstHeight) ? srcHeight : dstHeight;
 
         // Clamp to surface boundaries
-        if (dstRect.left + copyWidth > static_cast<LONG>(m_data.width)) {
-            copyWidth = m_data.width - dstRect.left;
+        if (dstRect.left + copyWidth > static_cast<LONG>(m_width)) {
+            copyWidth = m_width - dstRect.left;
         }
-        if (dstRect.top + copyHeight > static_cast<LONG>(m_data.height)) {
-            copyHeight = m_data.height - dstRect.top;
+        if (dstRect.top + copyHeight > static_cast<LONG>(m_height)) {
+            copyHeight = m_height - dstRect.top;
         }
-        if (srcRect.left + copyWidth > static_cast<LONG>(pSrc->m_data.width)) {
-            copyWidth = pSrc->m_data.width - srcRect.left;
+        if (srcRect.left + copyWidth > static_cast<LONG>(pSrc->m_width)) {
+            copyWidth = pSrc->m_width - srcRect.left;
         }
-        if (srcRect.top + copyHeight > static_cast<LONG>(pSrc->m_data.height)) {
-            copyHeight = pSrc->m_data.height - srcRect.top;
+        if (srcRect.top + copyHeight > static_cast<LONG>(pSrc->m_height)) {
+            copyHeight = pSrc->m_height - srcRect.top;
         }
 
         if (copyWidth <= 0 || copyHeight <= 0) {
@@ -402,15 +358,15 @@ HRESULT SurfaceImpl::BlitInternal(
         }
 
         // Perform the copy
-        bool useColorKey = (flags & DDBLT_KEYSRC) && pSrc->m_hasSrcColorKey;
-        uint32_t colorKey = pSrc->m_srcColorKey.dwColorSpaceLowValue;
+        bool useColorKey = (dwFlags & DDBLT_KEYSRC) && pSrc->m_hasSrcColorKey;
+        DWORD colorKey = pSrc->m_srcColorKey.dwColorSpaceLowValue;
 
         for (LONG y = 0; y < copyHeight; ++y) {
-            uint8_t* dstRow = m_data.pixels.data() +
-                              (dstRect.top + y) * m_data.pitch +
+            uint8_t* dstRow = m_pixels.data() +
+                              (dstRect.top + y) * m_pitch +
                               dstRect.left * bytesPerPixel;
-            const uint8_t* srcRow = pSrc->m_data.pixels.data() +
-                                    (srcRect.top + y) * pSrc->m_data.pitch +
+            const uint8_t* srcRow = pSrc->m_pixels.data() +
+                                    (srcRect.top + y) * pSrc->m_pitch +
                                     srcRect.left * bytesPerPixel;
 
             if (!useColorKey) {
@@ -418,7 +374,7 @@ HRESULT SurfaceImpl::BlitInternal(
             } else {
                 // Color key blit
                 for (LONG x = 0; x < copyWidth; ++x) {
-                    uint32_t pixel = 0;
+                    DWORD pixel = 0;
                     if (bytesPerPixel == 1) {
                         pixel = srcRow[x];
                     } else if (bytesPerPixel == 2) {
@@ -447,24 +403,58 @@ HRESULT SurfaceImpl::BlitInternal(
     return DD_OK;
 }
 
+HRESULT STDMETHODCALLTYPE SurfaceImpl::BltFast(
+    DWORD dwX,
+    DWORD dwY,
+    LPDIRECTDRAWSURFACE7 lpDDSrcSurface,
+    LPRECT lpSrcRect,
+    DWORD dwTrans)
+{
+    if (!lpDDSrcSurface) {
+        return DDERR_INVALIDPARAMS;
+    }
+
+    SurfaceImpl* pSrc = static_cast<SurfaceImpl*>(lpDDSrcSurface);
+
+    RECT srcRect;
+    if (lpSrcRect) {
+        srcRect = *lpSrcRect;
+    } else {
+        srcRect = { 0, 0, static_cast<LONG>(pSrc->m_width), static_cast<LONG>(pSrc->m_height) };
+    }
+
+    LONG width = srcRect.right - srcRect.left;
+    LONG height = srcRect.bottom - srcRect.top;
+    RECT dstRect = { static_cast<LONG>(dwX), static_cast<LONG>(dwY),
+                     static_cast<LONG>(dwX) + width, static_cast<LONG>(dwY) + height };
+
+    DWORD flags = 0;
+    if (dwTrans & DDBLTFAST_SRCCOLORKEY) {
+        flags |= DDBLT_KEYSRC;
+    }
+    if (dwTrans & DDBLTFAST_DESTCOLORKEY) {
+        flags |= DDBLT_KEYDEST;
+    }
+
+    return Blt(&dstRect, lpDDSrcSurface, &srcRect, flags, nullptr);
+}
+
 HRESULT STDMETHODCALLTYPE SurfaceImpl::Flip(
     LPDIRECTDRAWSURFACE7 lpDDSurfaceTargetOverride,
     DWORD dwFlags)
 {
-    LOG_TRACE("Flip: flags=0x%08X", dwFlags);
-
     LDC_UNUSED(lpDDSurfaceTargetOverride);
 
     // If we have a back buffer, swap content
     if (m_backBuffer) {
-        std::swap(m_data.pixels, m_backBuffer->m_data.pixels);
+        std::swap(m_pixels, m_backBuffer->m_pixels);
     }
 
+    // Present to screen
     NotifyContentChanged();
 
     // VSync wait if requested
     if (!(dwFlags & DDFLIP_NOVSYNC)) {
-        // Simple VSync simulation
         Sleep(1);
     }
 
@@ -476,42 +466,35 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::Flip(
 // ============================================================================
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetSurfaceDesc(LPDDSURFACEDESC2 lpDDSurfaceDesc) {
-    LOG_TRACE("GetSurfaceDesc");
-
     if (!lpDDSurfaceDesc) {
         return DDERR_INVALIDPARAMS;
     }
 
+    ZeroMemory(lpDDSurfaceDesc, sizeof(DDSURFACEDESC2));
     lpDDSurfaceDesc->dwSize = sizeof(DDSURFACEDESC2);
     lpDDSurfaceDesc->dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PITCH | DDSD_PIXELFORMAT | DDSD_CAPS;
-    lpDDSurfaceDesc->dwWidth = m_data.width;
-    lpDDSurfaceDesc->dwHeight = m_data.height;
-    lpDDSurfaceDesc->lPitch = m_data.pitch;
-    lpDDSurfaceDesc->ddpfPixelFormat = m_data.pixelFormat;
-    lpDDSurfaceDesc->ddsCaps = m_data.caps;
+    lpDDSurfaceDesc->dwWidth = m_width;
+    lpDDSurfaceDesc->dwHeight = m_height;
+    lpDDSurfaceDesc->lPitch = m_pitch;
+    lpDDSurfaceDesc->ddpfPixelFormat = m_pixelFormat;
+    lpDDSurfaceDesc->ddsCaps = m_caps;
 
     return DD_OK;
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetCaps(LPDDSCAPS2 lpDDSCaps) {
-    LOG_TRACE("GetCaps");
-
     if (!lpDDSCaps) {
         return DDERR_INVALIDPARAMS;
     }
-
-    *lpDDSCaps = m_data.caps;
+    *lpDDSCaps = m_caps;
     return DD_OK;
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetPixelFormat(LPDDPIXELFORMAT lpDDPixelFormat) {
-    LOG_TRACE("GetPixelFormat");
-
     if (!lpDDPixelFormat) {
         return DDERR_INVALIDPARAMS;
     }
-
-    *lpDDPixelFormat = m_data.pixelFormat;
+    *lpDDPixelFormat = m_pixelFormat;
     return DD_OK;
 }
 
@@ -520,21 +503,15 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::GetPixelFormat(LPDDPIXELFORMAT lpDDPixelF
 // ============================================================================
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetColorKey(DWORD dwFlags, LPDDCOLORKEY lpDDColorKey) {
-    LOG_TRACE("GetColorKey: flags=0x%08X", dwFlags);
-
     if (!lpDDColorKey) {
         return DDERR_INVALIDPARAMS;
     }
 
     if (dwFlags & DDCKEY_SRCBLT) {
-        if (!m_hasSrcColorKey) {
-            return DDERR_NOCOLORKEY;
-        }
+        if (!m_hasSrcColorKey) return DDERR_NOCOLORKEY;
         *lpDDColorKey = m_srcColorKey;
     } else if (dwFlags & DDCKEY_DESTBLT) {
-        if (!m_hasDestColorKey) {
-            return DDERR_NOCOLORKEY;
-        }
+        if (!m_hasDestColorKey) return DDERR_NOCOLORKEY;
         *lpDDColorKey = m_destColorKey;
     } else {
         return DDERR_INVALIDPARAMS;
@@ -544,8 +521,6 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::GetColorKey(DWORD dwFlags, LPDDCOLORKEY l
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::SetColorKey(DWORD dwFlags, LPDDCOLORKEY lpDDColorKey) {
-    LOG_TRACE("SetColorKey: flags=0x%08X", dwFlags);
-
     if (dwFlags & DDCKEY_SRCBLT) {
         if (lpDDColorKey) {
             m_srcColorKey = *lpDDColorKey;
@@ -572,8 +547,6 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::SetColorKey(DWORD dwFlags, LPDDCOLORKEY l
 // ============================================================================
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetDC(HDC* lphDC) {
-    LOG_TRACE("GetDC");
-
     if (!lphDC) {
         return DDERR_INVALIDPARAMS;
     }
@@ -582,17 +555,15 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::GetDC(HDC* lphDC) {
         return DDERR_DCALREADYCREATED;
     }
 
-    // Create a compatible DC
     HDC hScreenDC = GetDC(nullptr);
     m_hDC = CreateCompatibleDC(hScreenDC);
 
-    // Create a DIB section
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = m_data.width;
-    bmi.bmiHeader.biHeight = -static_cast<LONG>(m_data.height);  // Top-down
+    bmi.bmiHeader.biWidth = m_width;
+    bmi.bmiHeader.biHeight = -static_cast<LONG>(m_height);
     bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = static_cast<WORD>(m_data.bpp);
+    bmi.bmiHeader.biBitCount = static_cast<WORD>(m_bpp);
     bmi.bmiHeader.biCompression = BI_RGB;
 
     void* pBits = nullptr;
@@ -605,9 +576,7 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::GetDC(HDC* lphDC) {
         return DDERR_GENERIC;
     }
 
-    // Copy current surface data to DIB
-    memcpy(pBits, m_data.pixels.data(), m_data.pixels.size());
-
+    memcpy(pBits, m_pixels.data(), m_pixels.size());
     m_hBitmapOld = static_cast<HBITMAP>(SelectObject(m_hDC, m_hBitmap));
     ReleaseDC(nullptr, hScreenDC);
 
@@ -616,20 +585,16 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::GetDC(HDC* lphDC) {
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::ReleaseDC(HDC hDC) {
-    LOG_TRACE("ReleaseDC");
-
     if (hDC != m_hDC || !m_hDC) {
         return DDERR_INVALIDPARAMS;
     }
 
-    // Copy DIB data back to surface
     BITMAP bm;
     GetObject(m_hBitmap, sizeof(bm), &bm);
     if (bm.bmBits) {
-        memcpy(m_data.pixels.data(), bm.bmBits, m_data.pixels.size());
+        memcpy(m_pixels.data(), bm.bmBits, m_pixels.size());
     }
 
-    // Clean up
     SelectObject(m_hDC, m_hBitmapOld);
     DeleteObject(m_hBitmap);
     DeleteDC(m_hDC);
@@ -644,64 +609,36 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::ReleaseDC(HDC hDC) {
 }
 
 // ============================================================================
-// Palette Methods
+// Palette/Clipper Methods
 // ============================================================================
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetPalette(LPDIRECTDRAWPALETTE* lplpDDPalette) {
-    LOG_TRACE("GetPalette");
-
-    if (!lplpDDPalette) {
-        return DDERR_INVALIDPARAMS;
-    }
-
-    if (!m_palette) {
-        *lplpDDPalette = nullptr;
-        return DDERR_NOPALETTEATTACHED;
-    }
-
-    // TODO: Return palette
+    if (!lplpDDPalette) return DDERR_INVALIDPARAMS;
     *lplpDDPalette = nullptr;
     return DDERR_NOPALETTEATTACHED;
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::SetPalette(LPDIRECTDRAWPALETTE lpDDPalette) {
-    LOG_TRACE("SetPalette");
-
-    // TODO: Implement palette attachment
     LDC_UNUSED(lpDDPalette);
     return DD_OK;
 }
 
-// ============================================================================
-// Clipper Methods
-// ============================================================================
-
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetClipper(LPDIRECTDRAWCLIPPER* lplpDDClipper) {
-    LOG_TRACE("GetClipper");
-
-    if (!lplpDDClipper) {
-        return DDERR_INVALIDPARAMS;
-    }
-
-    // TODO: Return clipper
+    if (!lplpDDClipper) return DDERR_INVALIDPARAMS;
     *lplpDDClipper = nullptr;
     return DDERR_NOCLIPPERATTACHED;
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::SetClipper(LPDIRECTDRAWCLIPPER lpDDClipper) {
-    LOG_TRACE("SetClipper");
-
-    // TODO: Implement clipper attachment
     LDC_UNUSED(lpDDClipper);
     return DD_OK;
 }
 
 // ============================================================================
-// Stub Methods
+// Stub/Simple Methods
 // ============================================================================
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::AddAttachedSurface(LPDIRECTDRAWSURFACE7 lpDDSAttachedSurface) {
-    LOG_TRACE("AddAttachedSurface");
     LDC_UNUSED(lpDDSAttachedSurface);
     return DD_OK;
 }
@@ -742,9 +679,7 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::EnumOverlayZOrders(DWORD dwFlags, LPVOID 
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetAttachedSurface(LPDDSCAPS2 lpDDSCaps, LPDIRECTDRAWSURFACE7* lplpDDAttachedSurface) {
-    if (!lplpDDAttachedSurface) {
-        return DDERR_INVALIDPARAMS;
-    }
+    if (!lplpDDAttachedSurface) return DDERR_INVALIDPARAMS;
 
     if (m_backBuffer && (lpDDSCaps->dwCaps & DDSCAPS_BACKBUFFER)) {
         m_backBuffer->AddRef();
@@ -812,14 +747,9 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::UpdateOverlayZOrder(DWORD dwFlags, LPDIRE
     return DDERR_UNSUPPORTED;
 }
 
-// ============================================================================
 // IDirectDrawSurface2+ Methods
-// ============================================================================
-
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetDDInterface(LPVOID* lplpDD) {
-    if (!lplpDD) {
-        return DDERR_INVALIDPARAMS;
-    }
+    if (!lplpDD) return DDERR_INVALIDPARAMS;
     if (m_parent) {
         m_parent->AddRef();
         *lplpDD = m_parent;
@@ -838,28 +768,20 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::PageUnlock(DWORD dwFlags) {
     return DD_OK;
 }
 
-// ============================================================================
 // IDirectDrawSurface3+ Methods
-// ============================================================================
-
 HRESULT STDMETHODCALLTYPE SurfaceImpl::SetSurfaceDesc(LPDDSURFACEDESC2 lpDDSD, DWORD dwFlags) {
     LDC_UNUSED(lpDDSD);
     LDC_UNUSED(dwFlags);
     return DDERR_UNSUPPORTED;
 }
 
-// ============================================================================
 // IDirectDrawSurface4+ Methods
-// ============================================================================
-
 HRESULT STDMETHODCALLTYPE SurfaceImpl::SetPrivateData(REFGUID guidTag, LPVOID lpData, DWORD cbSize, DWORD dwFlags) {
     LDC_UNUSED(dwFlags);
-
     if (!lpData || cbSize == 0) {
         m_privateData.erase(guidTag);
         return DD_OK;
     }
-
     std::vector<uint8_t> data(static_cast<uint8_t*>(lpData),
                                static_cast<uint8_t*>(lpData) + cbSize);
     m_privateData[guidTag] = std::move(data);
@@ -868,22 +790,13 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::SetPrivateData(REFGUID guidTag, LPVOID lp
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetPrivateData(REFGUID guidTag, LPVOID lpBuffer, LPDWORD lpcbBufferSize) {
     auto it = m_privateData.find(guidTag);
-    if (it == m_privateData.end()) {
-        return DDERR_NOTFOUND;
-    }
-
-    if (!lpcbBufferSize) {
-        return DDERR_INVALIDPARAMS;
-    }
-
+    if (it == m_privateData.end()) return DDERR_NOTFOUND;
+    if (!lpcbBufferSize) return DDERR_INVALIDPARAMS;
     if (*lpcbBufferSize < it->second.size()) {
         *lpcbBufferSize = static_cast<DWORD>(it->second.size());
         return DDERR_MOREDATA;
     }
-
-    if (lpBuffer) {
-        memcpy(lpBuffer, it->second.data(), it->second.size());
-    }
+    if (lpBuffer) memcpy(lpBuffer, it->second.data(), it->second.size());
     *lpcbBufferSize = static_cast<DWORD>(it->second.size());
     return DD_OK;
 }
@@ -894,9 +807,7 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::FreePrivateData(REFGUID guidTag) {
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetUniquenessValue(LPDWORD lpValue) {
-    if (!lpValue) {
-        return DDERR_INVALIDPARAMS;
-    }
+    if (!lpValue) return DDERR_INVALIDPARAMS;
     *lpValue = m_uniquenessValue;
     return DD_OK;
 }
@@ -906,30 +817,23 @@ HRESULT STDMETHODCALLTYPE SurfaceImpl::ChangeUniquenessValue() {
     return DD_OK;
 }
 
-// ============================================================================
 // IDirectDrawSurface7 Methods
-// ============================================================================
-
 HRESULT STDMETHODCALLTYPE SurfaceImpl::SetPriority(DWORD dwPriority) {
-    LDC_UNUSED(dwPriority);
+    m_priority = dwPriority;
     return DD_OK;
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetPriority(LPDWORD lpdwPriority) {
-    if (lpdwPriority) {
-        *lpdwPriority = 0;
-    }
+    if (lpdwPriority) *lpdwPriority = m_priority;
     return DD_OK;
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::SetLOD(DWORD dwMaxLOD) {
-    LDC_UNUSED(dwMaxLOD);
+    m_lod = dwMaxLOD;
     return DD_OK;
 }
 
 HRESULT STDMETHODCALLTYPE SurfaceImpl::GetLOD(LPDWORD lpdwMaxLOD) {
-    if (lpdwMaxLOD) {
-        *lpdwMaxLOD = 0;
-    }
+    if (lpdwMaxLOD) *lpdwMaxLOD = m_lod;
     return DD_OK;
 }
