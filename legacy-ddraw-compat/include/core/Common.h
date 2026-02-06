@@ -57,6 +57,55 @@ enum class LogLevel {
     Error = 4
 };
 
+inline const char* LogLevelToString(LogLevel level) {
+    switch (level) {
+        case LogLevel::Trace: return "TRACE";
+        case LogLevel::Debug: return "DEBUG";
+        case LogLevel::Info:  return "INFO";
+        case LogLevel::Warn:  return "WARN";
+        case LogLevel::Error: return "ERROR";
+        default: return "UNKNOWN";
+    }
+}
+
+inline LogLevel StringToLogLevel(const std::string& str) {
+    if (str == "TRACE" || str == "trace") return LogLevel::Trace;
+    if (str == "DEBUG" || str == "debug") return LogLevel::Debug;
+    if (str == "INFO" || str == "info") return LogLevel::Info;
+    if (str == "WARN" || str == "warn") return LogLevel::Warn;
+    if (str == "ERROR" || str == "error") return LogLevel::Error;
+    return LogLevel::Info;  // Default
+}
+
+// ============================================================================
+// Renderer Type Enumeration
+// ============================================================================
+
+enum class RendererType {
+    Auto = 0,   // Auto-detect best available
+    GDI = 1,    // GDI (always available)
+    OpenGL = 2, // OpenGL
+    D3D9 = 3    // Direct3D 9
+};
+
+inline const char* RendererTypeToString(RendererType type) {
+    switch (type) {
+        case RendererType::Auto:   return "auto";
+        case RendererType::GDI:    return "gdi";
+        case RendererType::OpenGL: return "opengl";
+        case RendererType::D3D9:   return "d3d9";
+        default: return "unknown";
+    }
+}
+
+inline RendererType StringToRendererType(const std::string& str) {
+    if (str == "auto" || str == "Auto") return RendererType::Auto;
+    if (str == "gdi" || str == "GDI") return RendererType::GDI;
+    if (str == "opengl" || str == "OpenGL") return RendererType::OpenGL;
+    if (str == "d3d9" || str == "D3D9" || str == "direct3d9") return RendererType::D3D9;
+    return RendererType::Auto;  // Default
+}
+
 // ============================================================================
 // NonCopyable Base Class
 // ============================================================================
