@@ -211,9 +211,14 @@ bool ConfigManager::LoadFromExecutableDirectory() {
 }
 
 void ConfigManager::LoadSection(const IniParser& parser, const std::string& section) {
+    auto parseNonNegativeInt = [&](const std::string& key, int defaultValue) {
+        int value = parser.GetInt(section, key, defaultValue);
+        return value < 0 ? 0 : value;
+    };
+
     // Display settings
-    m_config.width = parser.GetInt(section, "width", m_config.width);
-    m_config.height = parser.GetInt(section, "height", m_config.height);
+    m_config.width = static_cast<uint32_t>(parseNonNegativeInt("width", static_cast<int>(m_config.width)));
+    m_config.height = static_cast<uint32_t>(parseNonNegativeInt("height", static_cast<int>(m_config.height)));
     m_config.fullscreen = parser.GetBool(section, "fullscreen", m_config.fullscreen);
     m_config.borderless = parser.GetBool(section, "borderless", m_config.borderless);
     m_config.maintainAspectRatio = parser.GetBool(section, "maintainaspectratio", m_config.maintainAspectRatio);
@@ -229,10 +234,12 @@ void ConfigManager::LoadSection(const IniParser& parser, const std::string& sect
     m_config.maxGameTicks = parser.GetInt(section, "maxgameticks", m_config.maxGameTicks);
     m_config.singleCpu = parser.GetBool(section, "singlecpu", m_config.singleCpu);
     m_config.hookChildWindows = parser.GetBool(section, "hookchildwindows", m_config.hookChildWindows);
+    m_config.lockAltTab = parser.GetBool(section, "lockalttab", m_config.lockAltTab);
 
     // Input settings
     m_config.adjustMouse = parser.GetBool(section, "adjustmouse", m_config.adjustMouse);
     m_config.lockCursor = parser.GetBool(section, "lockcursor", m_config.lockCursor);
+    m_config.fixMouseCursor = parser.GetBool(section, "fixmousecursor", m_config.fixMouseCursor);
 
     // Debug settings
     m_config.logLevel = parser.GetString(section, "loglevel", m_config.logLevel);
@@ -240,8 +247,9 @@ void ConfigManager::LoadSection(const IniParser& parser, const std::string& sect
     m_config.showFps = parser.GetBool(section, "showfps", m_config.showFps);
 
     // Hotkeys
-    m_config.hotkeyFullscreen = parser.GetInt(section, "hotkey_fullscreen", m_config.hotkeyFullscreen);
-    m_config.hotkeyScreenshot = parser.GetInt(section, "hotkey_screenshot", m_config.hotkeyScreenshot);
+    m_config.hotkeyFullscreen = static_cast<uint32_t>(parseNonNegativeInt("hotkey_fullscreen", static_cast<int>(m_config.hotkeyFullscreen)));
+    m_config.hotkeyScreenshot = static_cast<uint32_t>(parseNonNegativeInt("hotkey_screenshot", static_cast<int>(m_config.hotkeyScreenshot)));
+    m_config.hotkeyUnlockCursor = static_cast<uint32_t>(parseNonNegativeInt("hotkey_unlockcursor", static_cast<int>(m_config.hotkeyUnlockCursor)));
 }
 
 void ConfigManager::ApplyGameSpecificOverrides(const IniParser& parser, const std::string& exeName) {
