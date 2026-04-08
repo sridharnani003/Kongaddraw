@@ -226,7 +226,7 @@ void LDC_PresentToScreen(const BYTE* pixels, DWORD width, DWORD height, DWORD pi
     }
     else {
         /* Use config setting for filtering mode */
-        int stretchMode = LDC_GetConfigBool("bilinear") ? HALFTONE : COLORONCOLOR;
+        int stretchMode = LDC_GetConfigBool("smooth") ? HALFTONE : COLORONCOLOR;
         SetStretchBltMode(g_ldc.hdcWindow, stretchMode);
         if (stretchMode == HALFTONE) {
             SetBrushOrgEx(g_ldc.hdcWindow, 0, 0, NULL);
