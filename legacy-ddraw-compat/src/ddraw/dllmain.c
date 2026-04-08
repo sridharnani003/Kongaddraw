@@ -338,6 +338,40 @@ static LRESULT CALLBACK LDC_WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
             LDC_UpdateScaling();
             break;
 
+        case WM_SYSKEYDOWN:
+        case WM_KEYDOWN:
+        {
+            BOOL altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+            BOOL ctrlDown = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+            BOOL rAltDown = (GetAsyncKeyState(VK_RMENU) & 0x8000) != 0;
+            BOOL rCtrlDown = (GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0;
+
+            /* Alt + Enter = Toggle fullscreen/windowed */
+            if (altDown && wParam == VK_RETURN) {
+                LDC_ToggleFullscreen();
+                return 0;  /* Consume the key */
+            }
+
+            /* Ctrl + Tab = Unlock cursor */
+            if (ctrlDown && wParam == VK_TAB) {
+                LDC_UnlockCursor();
+                return 0;
+            }
+
+            /* Right Alt + Right Ctrl = Unlock cursor */
+            if (rAltDown && rCtrlDown) {
+                LDC_UnlockCursor();
+                return 0;
+            }
+
+            /* Alt + Page Down = Maximize/restore window */
+            if (altDown && wParam == VK_NEXT) {
+                LDC_MaximizeWindow();
+                return 0;
+            }
+            break;
+        }
+
         case WM_MOUSEMOVE:
         case WM_LBUTTONDOWN:
         case WM_LBUTTONUP:
@@ -374,6 +408,84 @@ void LDC_UnsubclassWindow(void)
         g_ldc.originalWndProc = NULL;
         LDC_LOG("Window unsubclassed");
     }
+}
+
+/* ============================================================================
+ * Hotkey Functions
+ * ============================================================================ */
+
+void LDC_ToggleFullscreen(void)
+{
+    if (!g_ldc.hWnd) return;
+
+    LDC_LOG("ToggleFullscreen: %s -> %s",
+            g_ldc.isFullscreen ? "fullscreen" : "windowed",
+            g_ldc.isFullscreen ? "windowed" : "fullscreen");
+
+    if (!g_ldc.isFullscreen) {
+        /* Save current window state */
+        g_ldc.savedWindowStyle = (DWORD)GetWindowLongPtrA(g_ldc.hWnd, GWL_STYLE);
+        g_ldc.savedWindowExStyle = (DWORD)GetWindowLongPtrA(g_ldc.hWnd, GWL_EXSTYLE);
+        GetWindowRect(g_ldc.hWnd, &g_ldc.savedWindowRect);
+
+        /* Get monitor info for fullscreen */
+        HMONITOR hMon = MonitorFromWindow(g_ldc.hWnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi;
+        mi.cbSize = sizeof(mi);
+        GetMonitorInfoA(hMon, &mi);
+
+        /* Remove window decorations and go fullscreen */
+        SetWindowLongPtrA(g_ldc.hWnd, GWL_STYLE,
+                          g_ldc.savedWindowStyle & ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU));
+        SetWindowLongPtrA(g_ldc.hWnd, GWL_EXSTYLE,
+                          g_ldc.savedWindowExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+
+        SetWindowPos(g_ldc.hWnd, HWND_TOP,
+                     mi.rcMonitor.left, mi.rcMonitor.top,
+                     mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top,
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
+        g_ldc.isFullscreen = TRUE;
+    }
+    else {
+        /* Restore window style and position */
+        SetWindowLongPtrA(g_ldc.hWnd, GWL_STYLE, g_ldc.savedWindowStyle);
+        SetWindowLongPtrA(g_ldc.hWnd, GWL_EXSTYLE, g_ldc.savedWindowExStyle);
+
+        SetWindowPos(g_ldc.hWnd, NULL,
+                     g_ldc.savedWindowRect.left, g_ldc.savedWindowRect.top,
+                     g_ldc.savedWindowRect.right - g_ldc.savedWindowRect.left,
+                     g_ldc.savedWindowRect.bottom - g_ldc.savedWindowRect.top,
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
+        g_ldc.isFullscreen = FALSE;
+    }
+
+    LDC_UpdateScaling();
+}
+
+void LDC_UnlockCursor(void)
+{
+    LDC_LOG("UnlockCursor");
+    ClipCursor(NULL);
+    g_ldc.cursorLocked = FALSE;
+}
+
+void LDC_MaximizeWindow(void)
+{
+    if (!g_ldc.hWnd) return;
+
+    LDC_LOG("MaximizeWindow");
+
+    if (IsZoomed(g_ldc.hWnd)) {
+        ShowWindow(g_ldc.hWnd, SW_RESTORE);
+    }
+    else {
+        ShowWindow(g_ldc.hWnd, SW_MAXIMIZE);
+    }
+
+    LDC_UpdateScaling();
 }
 
 /* ============================================================================

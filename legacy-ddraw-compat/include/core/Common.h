@@ -110,6 +110,15 @@ typedef struct LDC_GlobalState {
     DWORD lastFpsTime;
     DWORD fps;
 
+    /* Fullscreen toggle state */
+    BOOL isFullscreen;
+    RECT savedWindowRect;
+    DWORD savedWindowStyle;
+    DWORD savedWindowExStyle;
+
+    /* Cursor lock state */
+    BOOL cursorLocked;
+
 } LDC_GlobalState;
 
 /* Global state instance */
@@ -138,6 +147,9 @@ void LDC_SubclassWindow(HWND hWnd);
 void LDC_UnsubclassWindow(void);
 void LDC_UpdateScaling(void);
 POINT LDC_TransformMouseToGame(POINT pt);
+void LDC_ToggleFullscreen(void);
+void LDC_UnlockCursor(void);
+void LDC_MaximizeWindow(void);
 
 /* ============================================================================
  * Forward Declarations for COM Objects
