@@ -158,6 +158,13 @@ BOOL LDC_GetConfigBool(const char* key);
 int LDC_GetConfigInt(const char* key);
 
 /* ============================================================================
+ * API Hooks (Windows 7 Compatibility)
+ * ============================================================================ */
+
+BOOL LDC_InstallHooks(void);
+void LDC_RemoveHooks(void);
+
+/* ============================================================================
  * DirectDraw Object Creation
  * ============================================================================ */
 
