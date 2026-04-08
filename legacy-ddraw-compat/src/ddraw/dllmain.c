@@ -399,11 +399,6 @@ BOOL LDC_Initialize(void)
     LDC_LoadConfig();
     LDC_ApplyConfig();
 
-    /* Install API hooks for Windows 7 compatibility */
-    if (LDC_GetConfigBool("hooks")) {
-        LDC_InstallHooks();
-    }
-
     timeBeginPeriod(1);
 
     g_ldc.initialized = TRUE;
@@ -417,9 +412,6 @@ void LDC_Shutdown(void)
     if (!g_ldc.initialized) return;
 
     LDC_LOG("legacy-ddraw-compat shutting down...");
-
-    /* Remove API hooks */
-    LDC_RemoveHooks();
 
     LDC_UnsubclassWindow();
 

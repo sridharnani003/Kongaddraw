@@ -21,7 +21,6 @@ typedef struct {
     BOOL smooth;
     BOOL adjmouse;
     BOOL fixpitch;
-    BOOL hooks;
     BOOL debug;
     int width;
     int height;
@@ -33,7 +32,6 @@ static Config s_config = {
     TRUE,   /* smooth */
     TRUE,   /* adjmouse */
     TRUE,   /* fixpitch */
-    TRUE,   /* hooks - enabled by default for Win7 compat */
     FALSE,  /* debug */
     0,      /* width */
     0       /* height */
@@ -70,8 +68,6 @@ static void ParseLine(const char* key, const char* val) {
         s_config.adjmouse = ParseBool(val);
     else if (_stricmp(key, "fixpitch") == 0)
         s_config.fixpitch = ParseBool(val);
-    else if (_stricmp(key, "hooks") == 0)
-        s_config.hooks = ParseBool(val);
     else if (_stricmp(key, "log") == 0 || _stricmp(key, "debug") == 0)
         s_config.debug = ParseBool(val);
     else if (_stricmp(key, "width") == 0)
@@ -127,7 +123,6 @@ BOOL LDC_GetConfigBool(const char* key) {
     if (_stricmp(key, "smooth") == 0 || _stricmp(key, "bilinear") == 0) return s_config.smooth;
     if (_stricmp(key, "adjmouse") == 0) return s_config.adjmouse;
     if (_stricmp(key, "fixpitch") == 0) return s_config.fixpitch;
-    if (_stricmp(key, "hooks") == 0) return s_config.hooks;
     if (_stricmp(key, "debug") == 0) return s_config.debug;
     return FALSE;
 }
